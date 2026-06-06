@@ -1,5 +1,7 @@
 # no-hands-tvos
 
+[![CI](https://github.com/jpshackelford/no-hands-tvos/actions/workflows/ci.yml/badge.svg)](https://github.com/jpshackelford/no-hands-tvos/actions/workflows/ci.yml)
+
 Proof of concept for the No-Hands.dev universal component framework on tvOS.
 
 ## Purpose
@@ -77,6 +79,48 @@ Validate key architectural assumptions before building the full component system
 | RN tvOS won't build | ⚠️ Community support may be dead |
 | Dynamic JS blocked | ⚠️ Need static bundling, no hot-load |
 | Focus is broken | ⚠️ tvOS needs custom work |
+
+## Development
+
+### Prerequisites (macOS)
+
+- Xcode 26.3+ with the tvOS 26.2+ simulator runtime installed
+- Node 22 + npm 10
+- CocoaPods (`brew install cocoapods`)
+- watchman (`brew install watchman`)
+
+### Setup
+
+```sh
+git clone https://github.com/jpshackelford/no-hands-tvos.git
+cd no-hands-tvos/app
+npm install
+( cd ios && pod install )
+```
+
+### Day-to-day commands
+
+| Command | What it does |
+|---|---|
+| `npm --prefix app test` | Jest unit tests |
+| `npm --prefix app run lint` | ESLint |
+| `npm --prefix app run typecheck` | `tsc --noEmit` |
+| `npm --prefix app start` | Start Metro bundler |
+| `./scripts/smoke.sh` | End-to-end: native build + sim boot + install + launch + screenshot |
+| `./scripts/snap-sim.sh --window out.png` | Capture the Simulator window (with chrome) for a PR or issue |
+
+### Continuous Integration
+
+[GitHub Actions](.github/workflows/ci.yml) runs on every push to `main` and every PR:
+
+1. **`js` (ubuntu-latest, ~30s)** — lint + typecheck + Jest unit tests.
+2. **`tvos-smoke` (macos-15, ~14 min cold / ~5 min warm)** — gated on `js`. Ensures the tvOS simulator runtime is installed, restores CocoaPods + DerivedData caches, runs `scripts/smoke.sh`, and uploads the resulting screenshot and `.build-logs/` as artifacts (14-day retention).
+
+CI is the source of truth for "this milestone really works on a clean machine, not just my laptop." Per-run smoke screenshots can be downloaded from the run page or via `gh run download <run-id>`.
+
+### For agents / sub-agents
+
+[`AGENTS.md`](AGENTS.md) captures the hard-won project knowledge: working build recipes, the codegen-race retry pattern, focus-engine quirks, screenshot tooling, sudo posture, and dead-ends already explored. Read it before starting work on a new milestone.
 
 ## Related
 
