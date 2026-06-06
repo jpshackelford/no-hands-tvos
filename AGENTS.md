@@ -274,6 +274,104 @@ The user sees the right-side panel only when explicitly told. Call
   project that adds no value for a PoC. Revisit only if/when we have a large
   body of framework-agnostic logic.
 
+### Operating CI as an agent
+
+Quick reference for working with the CI pipeline. Assumes `gh` CLI is
+authenticated.
+
+#### Watching a run
+
+```sh
+# Most recent run on the current branch
+gh run list --branch "$(git branch --show-current)" --limit 1 \
+  --json databaseId,status,conclusion,event
+
+# Per-job status of a specific run
+RUN=27072344448
+gh run view $RUN --json jobs \
+  -q '.jobs[] | "\(.name): \(.status) \(.conclusion // "")"'
+
+# Step-by-step timing (useful for spotting what's slow / where it failed)
+gh run view $RUN --json jobs \
+  -q '.jobs[] | select(.name | contains("tvOS")) | .steps[]
+      | "\(.name): \(.conclusion // "?") \(((.completedAt|fromdateiso8601) - (.startedAt|fromdateiso8601)))s"'
+
+# Tail the logs of failed steps
+gh run view $RUN --log-failed | tail -200
+```
+
+#### Fetching artifacts to debug
+
+Two artifacts are always produced (success or failure):
+
+- `smoke-screenshot` — the final tvOS sim screenshot
+- `smoke-logs` — the `.build-logs/` directory (build log, metro log,
+  jsprobe log)
+
+```sh
+gh api repos/jpshackelford/no-hands-tvos/actions/runs/$RUN/artifacts \
+  -q '.artifacts[] | "\(.name) (\(.size_in_bytes) bytes)"'
+
+mkdir -p /tmp/ci-art && gh run download $RUN --name smoke-logs --dir /tmp/ci-art
+# Then inspect /tmp/ci-art/smoke-jsprobe-*.log,
+#               /tmp/ci-art/smoke-metro-*.log, etc.
+```
+
+When the CI smoke fails at the JS-load probe but the build succeeded, the
+metro log and jsprobe log are usually where the answer is.
+
+#### Common CI-specific failure modes (already learned)
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Artifacts step "succeeds" but nothing is uploaded | Dot-prefixed paths (`.build-logs/`) are skipped by `actions/upload-artifact@v4` unless `include-hidden-files: true` is set | Already set in `ci.yml`. Watch for this on any new dot-dir artifact. |
+| `smoke.sh` exit 5 (JS bundle did not load) | Predicate too narrow OR runner is just slow to launch | We now use `processImagePath CONTAINS "/app.app/"` and a 90s timeout. If still hitting, raise `TIMEOUT_LAUNCH_SECS` via workflow `env:` |
+| Cache misses two runs in a row even though `Podfile.lock` / `package-lock.json` unchanged | The previous run *failed*, so its `Post Cache *` step didn't save (`actions/cache@v4` default `save-always: false`) | Re-run when fixed. Don't push noise commits — the cache will warm itself on the next legitimately successful run. |
+| `xcodebuild` first-attempt failure with `ReactCodegen` input missing | The RN 0.83 codegen race — same one we hit locally | `smoke.sh` already retries once. If it persists past retry, the build genuinely broke. |
+
+#### Decoding cache behavior in CI logs
+
+```sh
+gh run view $RUN --log 2>&1 | grep -iE \
+  'cache hit|cache miss|cache not found|cache restored|cache saved' \
+  | head -20
+```
+
+A 0–1s `Cache CocoaPods` or `Cache DerivedData` step almost always means
+**miss**, not a fast hit (real hits take 10–60s for restoration). Look for
+the explicit "Cache hit" / "Cache not found" lines to be sure.
+
+#### When to push vs. when to investigate
+
+- **Don't push noise commits just to "kick" CI.** GitHub doesn't punish
+  unsuccessful runs and the cache state isn't repaired by extra pushes.
+- **Do** push a real change when CI is broken in a way that needs editing
+  the workflow or `smoke.sh`. Always include the diagnostic data in the
+  commit message (which artifact log proved what).
+- **Cancellation:** `concurrency` is set to cancel-in-progress for the same
+  ref, so rapid-fire pushes during iteration automatically discard older
+  runs. Use this — don't manually cancel via the UI.
+
+#### Triggering CI
+
+CI runs on `push` to `main` and `pull_request` against `main`. **Pushing to
+a feature branch does NOT trigger CI by itself** — open or update a PR. The
+PR branch's runs use the PR event (`event: pull_request`), so when polling
+via `gh run list`, filter on the branch *and* the event if disambiguation is
+needed.
+
+#### What not to put in CI without thinking
+
+- **OCR or image-diff verification of the screenshot.** Tempting, but
+  flaky and slow. The current shape (build + launch + probe + screenshot
+  artifact for human review) is a better cost/value point for a PoC.
+- **Detox / Maestro E2E.** Worth it starting Milestone 2 where there's
+  actual UI to assert against. Adds significant setup time; don't bring
+  in until needed.
+- **Release-mode (Hermes precompiled) builds.** Debug + Metro is what we
+  run today. Adding Release-mode builds later validates the eventual
+  shipping path but doubles the macOS minutes per run.
+
 ### Tooling installed during 2026-06-06 setup session
 
 | Tool | Source | Notes |
