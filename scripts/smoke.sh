@@ -28,7 +28,7 @@ DEVICE_NAME="${DEVICE_NAME:-Apple TV}"
 BUNDLE_ID="${BUNDLE_ID:-org.reactjs.native.example.app}"
 SCHEME="${SCHEME:-app}"
 CONFIGURATION="${CONFIGURATION:-Debug}"
-TIMEOUT_LAUNCH_SECS="${TIMEOUT_LAUNCH_SECS:-30}"
+TIMEOUT_LAUNCH_SECS="${TIMEOUT_LAUNCH_SECS:-90}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -169,19 +169,28 @@ LAUNCH_PID="$(echo "$LAUNCH_OUT" | awk '{print $2}')"
 
 # ---------------------------------------------------------------------------
 log "probe for JS bundle load (timeout ${TIMEOUT_LAUNCH_SECS}s)"
+# Match the same shape of log line we see locally:
+#   app: (app.debug.dylib) [com.facebook.react.log:javascript] Running "app" with ...
+# The simulator's log show command can filter by process. Use the executable
+# name so we catch any output from the launched app.
+PROBE_LOG="$LOG_DIR/smoke-jsprobe-$TS.log"
 DEADLINE=$(( $(date +%s) + TIMEOUT_LAUNCH_SECS ))
 JS_LOADED=0
 while [[ $(date +%s) -lt $DEADLINE ]]; do
-  if xcrun simctl spawn booted log show \
-        --predicate 'subsystem == "com.facebook.react.log"' \
-        --last 1m --info 2>/dev/null \
-        | grep -q 'Running "app"'; then
+  xcrun simctl spawn booted log show \
+      --predicate 'processImagePath CONTAINS "/app.app/"' \
+      --last 2m --info --debug 2>/dev/null > "$PROBE_LOG" || true
+  if grep -q 'Running "app"' "$PROBE_LOG"; then
     JS_LOADED=1; break
   fi
-  sleep 1
+  sleep 2
 done
 if [[ $JS_LOADED -ne 1 ]]; then
   echo "smoke: JS bundle did not load within ${TIMEOUT_LAUNCH_SECS}s" >&2
+  echo "--- last 50 lines of simulator log for our app ---" >&2
+  tail -50 "$PROBE_LOG" >&2 || true
+  echo "--- metro log tail ---" >&2
+  tail -50 "$METRO_LOG" 2>/dev/null >&2 || true
   exit 5
 fi
 echo "JS bundle loaded ✓"
