@@ -1,22 +1,38 @@
 /**
- * no-hands-tvos — Milestone 1
- * Validates: React Native tvOS builds and runs on Apple TV simulator.
+ * no-hands-tvos — Milestone 2
+ * Validates: a declarative JSON layout renders through PrimitiveRenderer,
+ * focus navigation works on tvOS, and each primitive is screen-visible.
  */
 
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { useEffect } from 'react';
+import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { PrimitiveRenderer } from './src/renderer/PrimitiveRenderer';
+import type { LayoutDefinition } from './src/renderer/types';
+import sampleLayout from './src/fixtures/sample-layout.json';
+
+// The fixture is authored to satisfy the LayoutDefinition contract. The JSON
+// import is typed as a plain object by TypeScript, so we narrow once here
+// rather than every place we use it.
+const layout = sampleLayout as LayoutDefinition;
+
+/**
+ * Marker line the smoke test grep's for. If the JS bundle loads but the
+ * renderer never mounts we'd see "Running \"app\"" without this — that's the
+ * exact "looks blank" failure scenario M2 is supposed to catch.
+ */
+const RENDERER_MOUNTED_MARKER = 'M2: PrimitiveRenderer mounted';
+
 function App() {
+  useEffect(() => {
+    console.log(RENDERER_MOUNTED_MARKER);
+  }, []);
+
   return (
     <SafeAreaProvider>
       <View style={styles.container}>
-        <Text style={styles.title}>Hello from tvOS</Text>
-        <Text style={styles.subtitle}>
-          Platform.OS = {Platform.OS} {Platform.isTVOS ? '(tvOS)' : ''}
-        </Text>
-        <Text style={styles.subtitle}>
-          Milestone 1: React Native tvOS works ✓
-        </Text>
+        <PrimitiveRenderer definition={layout} />
       </View>
     </SafeAreaProvider>
   );
@@ -26,20 +42,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0b1020',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 80,
-  },
-  title: {
-    color: '#ffffff',
-    fontSize: 72,
-    fontWeight: '700',
-    marginBottom: 32,
-  },
-  subtitle: {
-    color: '#a3b3d4',
-    fontSize: 28,
-    marginTop: 8,
   },
 });
 

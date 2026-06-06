@@ -1,0 +1,11 @@
+{
+  "layout": [
+    { "type": "card", "title": "Next Meeting", "subtitle": "Standup", "focusable": true },
+    { "type": "countdown", "target": "2026-05-27T09:00:00Z", "label": "Starts in" },
+    { "type": "list", "items": [
+      { "title": "9:00 AM - Standup" },
+      { "title": "11:00 AM - Design Review" },
+      { "title": "2:00 PM - 1:1 with Manager" }
+    ]}
+  ]
+}
