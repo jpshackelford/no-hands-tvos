@@ -1,0 +1,7 @@
+# Build artifacts and logs
+.build-logs/
+.DS_Store
+
+# Timestamped smoke artifacts (commit only milestone evidence)
+docs/screenshots/smoke-*.png
+docs/screenshots/sim-*.png

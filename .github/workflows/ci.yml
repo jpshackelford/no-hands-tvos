@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel older runs for the same ref. Keeps macOS minutes spent on the latest
+# commit only — important when pushing several fixes in a row.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------------------
+  # JS-side checks: lint, typecheck, unit tests. Runs on cheap Ubuntu.
+  # -------------------------------------------------------------------------
+  js:
+    name: Lint, typecheck, unit (ubuntu)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test -- --ci
+
+  # -------------------------------------------------------------------------
+  # Native tvOS build + simulator smoke. macOS runner. Slower, kept lean by
+  # caching npm and CocoaPods, and gated behind the js job (so a typo in JS
+  # doesn't burn macOS minutes).
+  # -------------------------------------------------------------------------
+  tvos-smoke:
+    name: tvOS build + simulator smoke (macos)
+    needs: js
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Show available Xcode versions
+        run: ls /Applications | grep -E '^Xcode' || true
+
+      - name: Select Xcode
+        # macos-15 ships with multiple Xcodes; pick the newest stable available
+        # on the runner image. If a specific version is required, set it here.
+        run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)" \
+            || sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Install JS dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Ensure tvOS simulator runtime is installed
+        run: |
+          if xcrun simctl list runtimes available | grep -q '^tvOS'; then
+            echo "tvOS runtime already present:"
+            xcrun simctl list runtimes available | grep '^tvOS'
+          else
+            echo "No tvOS runtime; downloading via xcodebuild..."
+            sudo xcodebuild -downloadPlatform tvOS
+          fi
+
+      - name: Ensure a tvOS simulator device exists
+        run: |
+          if xcrun simctl list devices available | awk '/-- tvOS/{f=1;next} /^--/{f=0} f' | grep -q 'Apple TV'; then
+            echo "Existing tvOS devices:"
+            xcrun simctl list devices available | awk '/-- tvOS/{f=1;next} /^--/{f=0} f'
+          else
+            RUNTIME="$(xcrun simctl list runtimes available | grep '^tvOS' | head -1 | awk '{print $NF}')"
+            DEVTYPE="$(xcrun simctl list devicetypes | grep -E 'Apple TV' | head -1 | sed -E 's/.* \(([^)]+)\)$/\1/')"
+            echo "Creating Apple TV device with runtime=$RUNTIME devtype=$DEVTYPE"
+            xcrun simctl create 'Apple TV' "$DEVTYPE" "$RUNTIME"
+          fi
+
+      - name: Cache CocoaPods
+        uses: actions/cache@v4
+        with:
+          path: app/ios/Pods
+          key: pods-${{ runner.os }}-${{ hashFiles('app/ios/Podfile.lock') }}
+          restore-keys: pods-${{ runner.os }}-
+
+      - name: pod install
+        working-directory: app/ios
+        run: pod install
+
+      - name: Cache DerivedData
+        uses: actions/cache@v4
+        with:
+          path: app/ios/build
+          key: deriveddata-${{ runner.os }}-${{ hashFiles('app/ios/Podfile.lock', 'app/package-lock.json') }}
+          restore-keys: deriveddata-${{ runner.os }}-
+
+      - name: List available tvOS simulators
+        run: xcrun simctl list devices available | grep -A30 'tvOS' || true
+
+      - name: Pick a tvOS device name
+        id: pick-device
+        run: |
+          # Prefer "Apple TV" (HD; lightest), fall back to a 4K variant.
+          DEVICE="$(xcrun simctl list devices available \
+            | awk '/-- tvOS/{f=1;next} /^--/{f=0} f && /\(.*\)/{print}' \
+            | sed -E 's/^[[:space:]]+//' \
+            | sed -E 's/ \([0-9A-F-]{36}\).*$//' \
+            | head -1)"
+          echo "Picked: $DEVICE"
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
+
+      - name: Run smoke.sh
+        env:
+          CI: '1'
+          DEVICE_NAME: ${{ steps.pick-device.outputs.device }}
+        run: ./scripts/smoke.sh --device "$DEVICE_NAME"
+
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-screenshot
+          path: docs/screenshots/smoke-*.png
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-logs
+          # .build-logs/ is a hidden directory; upload-artifact@v4 skips
+          # hidden paths by default. include-hidden-files: true is required.
+          path: .build-logs/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
