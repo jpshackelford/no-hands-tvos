@@ -117,3 +117,146 @@ xcrun simctl erase "Apple TV"
 - Branch per milestone: `milestone-N-short-name`
 - PRs are draft by default; user marks ready themselves
 - Always `Closes #N` in the PR body for the corresponding milestone issue
+- Disclose AI authorship in PR body and any issue comments (e.g. *"This PR was prepared by an AI agent (OpenHands) on behalf of @jpshackelford."*)
+
+---
+
+## Agent working environment
+
+Notes specifically about how to operate effectively in this user's setup — what
+tools exist, what's gated, and the patterns that have actually worked.
+
+### Visual feedback (what does the simulator look like right now?)
+
+The user expects to see screenshots, not just log excerpts. Three capture
+modes, in escalating quality:
+
+1. **Raw display content** (no chrome, 1920×1080):
+   `xcrun simctl io booted screenshot path.png`
+   Fastest, zero dependencies, no permissions. Use this for iteration.
+2. **Window with chrome** (matches what the user sees): use
+   `./scripts/snap-sim.sh --window path.png` — finds the Simulator's
+   CoreGraphics window ID via a small inline Swift program, then runs
+   `screencapture -o -l <wid>`. No `osascript` Accessibility grant required for
+   the window-id lookup itself (Swift's CGWindowListCopyWindowInfo is
+   unrestricted). The script also runs `osascript -e 'tell app "Simulator" to
+   activate'` to bring it forward, which **does** need Accessibility — granted
+   2026-06-06 for `osascript`.
+3. **Region capture via AppleScript bounds** (`screencapture -R x,y,w,h`) —
+   works but produces slight bleed past the window edges. Prefer mode 2.
+
+After saving, view via `file_editor command=view path=<file>` to see the image
+inline in the chat.
+
+### Process management on macOS
+
+- `setsid` is NOT installed. Don't use it.
+- `cmd &` from a tool-invoked shell tends to leave the process in `T` (Stopped)
+  state because the controlling terminal goes away. The job listens on its
+  port but never responds.
+- **Reliable detach pattern:**
+  `( nohup cmd > log 2>&1 </dev/null & )`
+  The subshell parens detach the job from job control entirely. Verified
+  working for Metro.
+- Always check `ps aux | grep ...` afterwards — look for `S` (sleeping/idle)
+  not `T` (stopped).
+- Don't `pkill -f node` or similar broad patterns — the user has many node
+  processes (LM Studio, Bun, etc.). Always kill by PID found from a targeted
+  `ps`/`lsof` lookup.
+
+### sudo
+
+`sudo -n true` returns 1: passwordless sudo is NOT configured. Anything
+needing sudo (e.g. `xcode-select -s`, `xcodebuild -license accept`) must be
+given to the user to paste into their own terminal. Bundle related sudo
+commands together so they only need to enter the password once.
+
+### Build iteration loop (the cheap inner loop)
+
+Metro hot-reloads JS. You do NOT need to rebuild the native app for JS-only
+changes.
+
+```sh
+# One-time per session:
+( nohup npx react-native start > ../.build-logs/metro.log 2>&1 </dev/null & )
+xcrun simctl launch booted org.reactjs.native.example.app
+
+# Iterate:
+# 1. edit App.tsx (or any JS file)
+# 2. ./scripts/snap-sim.sh --window docs/screenshots/iter-X.png
+# 3. view the PNG, decide next change
+```
+
+Only rebuild via `xcodebuild` when:
+- Native code (`.m`, `.mm`, `.swift`, `.h`) changes
+- `Podfile` or `package.json` native deps change
+- You see a red-screen "JS bundle stale" message that survives a Cmd+R
+
+### Reading simulator logs
+
+```sh
+# One-shot (recent activity):
+xcrun simctl spawn booted log show \
+  --predicate 'processImagePath CONTAINS "/app.app/"' \
+  --last 1m --info | tail -80
+
+# Live stream (for debugging hangs):
+xcrun simctl spawn booted log stream \
+  --predicate 'processImagePath CONTAINS "/app.app/"' \
+  --info --debug
+```
+
+Look for `[com.facebook.react.log:javascript]` lines — those are
+`console.log()` from the JS side.
+
+### Reaching GitHub
+
+`gh` CLI is authenticated and works. Prefer `gh issue view N --json …` over
+the default colored output: the ANSI control codes from `gh`'s default
+renderer are nearly unreadable when piped through the tool result back to the
+agent.
+
+### Brew / Homebrew
+
+- `brew` is on PATH at `/opt/homebrew` (Apple Silicon prefix).
+- Homebrew 5.1.x emits a lot of "TAP_TRUST" deprecation noise — ignore.
+- Bottle installs are fast; `brew install` for things with formulae like
+  `swiftlint` actually requires `Xcode.app` (not just CLT), so any pre-Xcode
+  attempts to install it will fail.
+
+### Repo layout outside this directory
+
+- All cloned repos live under `~/code/jpshackelford/`
+- agent-canvas session dir (`/Users/jpshack/workspace/project/<uuid>`) is
+  ephemeral — do NOT put long-lived work there
+
+### Agent Canvas UI panels
+
+The user sees the right-side panel only when explicitly told. Call
+`canvas_ui`:
+- `navigate_to_file` for a single file edit
+- `show_preview` for an image/PDF (e.g. screenshots)
+- `open_tab tab=files` after multi-file edits (diff view)
+- `open_tab tab=terminal` to surface a long log
+- `open_tab tab=tasklist` after task list updates
+
+### Things that have wasted time so far
+
+- Trying `react-native run-ios` thinking it would pick the tvOS sim (it
+  doesn't — see Gotcha #2 above)
+- Trying to install SwiftLint before Xcode.app existed
+- Trying to install Xcode itself headlessly (no fully unattended path; App
+  Store with prior auth is simplest)
+- Using bare `&` instead of subshell-detached `( ... & )` for Metro
+- Asking `gh issue view` without `--json` and getting an ANSI soup back
+
+### Tooling installed during 2026-06-06 setup session
+
+| Tool | Source | Notes |
+|---|---|---|
+| `xcbeautify` 3.2.1 | brew | Renders xcodebuild output readable |
+| `watchman` 2026.06.01 | brew | Metro file watcher |
+| `swiftlint` 0.63.3 | brew | Needs Xcode.app present |
+| `cocoapods` 1.16.2_2 | brew | Brings its own Ruby 4.0; bypasses old system Ruby |
+| Xcode | App Store | 26.3 / build 17C529 |
+| tvOS 26.2 sim | `xcodebuild -downloadPlatform tvOS` | ~3 GB |
