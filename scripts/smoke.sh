@@ -169,24 +169,34 @@ LAUNCH_PID="$(echo "$LAUNCH_OUT" | awk '{print $2}')"
 
 # ---------------------------------------------------------------------------
 log "probe for JS bundle load (timeout ${TIMEOUT_LAUNCH_SECS}s)"
-# Match the same shape of log line we see locally:
-#   app: (app.debug.dylib) [com.facebook.react.log:javascript] Running "app" with ...
-# The simulator's log show command can filter by process. Use the executable
-# name so we catch any output from the launched app.
+# We want to catch BOTH "bundle didn't load at all" AND "bundle loaded but
+# nothing rendered" failures. So we require two markers:
+#   1. `Running "app"` — RN's own log line when the bundle starts executing.
+#   2. `M2: PrimitiveRenderer mounted` — emitted by App.tsx's useEffect once
+#      the M2 PrimitiveRenderer has actually been mounted. If JS loads but
+#      our root component never renders (e.g. the renderer threw and a red
+#      box took over) we still fail with exit 5.
 PROBE_LOG="$LOG_DIR/smoke-jsprobe-$TS.log"
 DEADLINE=$(( $(date +%s) + TIMEOUT_LAUNCH_SECS ))
 JS_LOADED=0
+RENDERER_MOUNTED=0
 while [[ $(date +%s) -lt $DEADLINE ]]; do
   xcrun simctl spawn booted log show \
       --predicate 'processImagePath CONTAINS "/app.app/"' \
       --last 2m --info --debug 2>/dev/null > "$PROBE_LOG" || true
-  if grep -q 'Running "app"' "$PROBE_LOG"; then
-    JS_LOADED=1; break
+  if [[ $JS_LOADED -ne 1 ]] && grep -q 'Running "app"' "$PROBE_LOG"; then
+    JS_LOADED=1
+  fi
+  if grep -q 'M2: PrimitiveRenderer mounted' "$PROBE_LOG"; then
+    RENDERER_MOUNTED=1
+  fi
+  if [[ $JS_LOADED -eq 1 && $RENDERER_MOUNTED -eq 1 ]]; then
+    break
   fi
   sleep 2
 done
-if [[ $JS_LOADED -ne 1 ]]; then
-  echo "smoke: JS bundle did not load within ${TIMEOUT_LAUNCH_SECS}s" >&2
+if [[ $JS_LOADED -ne 1 || $RENDERER_MOUNTED -ne 1 ]]; then
+  echo "smoke: failed within ${TIMEOUT_LAUNCH_SECS}s — JS_LOADED=$JS_LOADED RENDERER_MOUNTED=$RENDERER_MOUNTED" >&2
   echo "--- last 50 lines of simulator log for our app ---" >&2
   tail -50 "$PROBE_LOG" >&2 || true
   echo "--- metro log tail ---" >&2
@@ -194,6 +204,7 @@ if [[ $JS_LOADED -ne 1 ]]; then
   exit 5
 fi
 echo "JS bundle loaded ✓"
+echo "PrimitiveRenderer mounted ✓"
 
 # ---------------------------------------------------------------------------
 log "screenshot"

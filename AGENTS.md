@@ -372,6 +372,61 @@ needed.
   run today. Adding Release-mode builds later validates the eventual
   shipping path but doubles the macOS minutes per run.
 
+## Milestone 2 learnings (declarative primitives + focus)
+
+- **`react-test-renderer` + RN preset: `findByType(Pressable)` doesn't
+  find Pressables.** The Pressable identity exported from the test runtime
+  copy of `react-native` doesn't match the one inside the host instance
+  tree, so `findByType(Pressable)` returns 0. Workarounds that work:
+    - `root.findAll((i) => typeof i.type !== 'string' && (i.type.displayName === 'Pressable' || i.type.name === 'Pressable'))`
+    - Adding a `testID` and filtering by it — but be aware Pressable
+      *forwards* `testID` to its host `View`, so `findAllByProps({ testID })`
+      will return both the React component instance AND its host View. Filter
+      by displayName as well, or filter by the presence of one of the
+      props you actually set (`onPress`).
+  Captured as a helper in `app/src/primitives/{Card,List}.test.tsx`.
+
+- **Driving focus state in tests.** With the RN preset, `Pressable`'s
+  `onFocus` / `onBlur` props are reachable from the Pressable React
+  instance. The tests trigger them directly via
+  `pressable.props.onFocus()` inside `ReactTestRenderer.act(...)` — no need
+  to simulate native focus events.
+
+- **Countdown determinism.** Use `jest.useFakeTimers()` +
+  `jest.setSystemTime(new Date(...))` in `beforeEach`. The Countdown's
+  `useEffect` registers a `setInterval(..., 1000)`; advance time with
+  `jest.advanceTimersByTime(1000)` inside `act()` to assert the next
+  rendered value.
+
+- **JSON imports in App.tsx.** `@react-native/typescript-config` already sets
+  `resolveJsonModule: true`, so `import sampleLayout from
+  './src/fixtures/sample-layout.json'` Just Works. Cast at the import site
+  rather than typing the JSON file with a `.d.ts`.
+
+- **Smoke probe should look for *both* JS load AND your renderer.** M1's
+  smoke probe only checked for `Running "app"`, which would still succeed
+  if the bundle loaded but the renderer crashed and a red-box took over.
+  M2 added a second marker, `M2: PrimitiveRenderer mounted`, that
+  `App.tsx` logs via `useEffect` once the renderer has actually mounted.
+  Both must appear before smoke reports success.
+
+- **Focus indicator on `Pressable` is enough.** Driving a `borderColor` +
+  small `transform: [{ scale: 1.02..1.04 }]` from `onFocus`/`onBlur` state
+  on a regular `Pressable` produces a visible focus ring on tvOS without
+  requiring `tvParallaxProperties` or `reanimated`. Verified in the
+  milestone-2 screenshot: the focused Card has a `#7aa2ff` border.
+
+- **Initial focus.** With no `hasTVPreferredFocus={true}` set, the focus
+  engine grabs the first focusable in tree order on mount — which is what
+  the M2 layout wants (focus lands on the first Card). Don't add the prop
+  unless you actually want to override that.
+
+- **Why no FlatList in `List`.** `FlatList`/virtualised lists have known
+  focus-engine rough edges on tvOS, and the M2 lists are tiny. Using a
+  plain `View` of mapped `Pressable`s lets the focus engine "just work"
+  with up/down navigation between rows. Revisit only if a primitive needs
+  to handle hundreds of items.
+
 ### Tooling installed during 2026-06-06 setup session
 
 | Tool | Source | Notes |

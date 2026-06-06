@@ -7,52 +7,52 @@ import ReactTestRenderer, { ReactTestInstance } from 'react-test-renderer';
 import App from '../App';
 
 /**
- * Walk the rendered tree and collect every string child.
- * react-test-renderer doesn't give us a built-in textContent helper, so we
- * recurse manually.
+ * Walk the rendered tree and collect every string child. Same helper used by
+ * the primitive unit tests.
  */
 function collectText(node: ReactTestInstance | string | null): string {
   if (node == null) return '';
   if (typeof node === 'string') return node;
-  const children = node.children ?? [];
-  return children.map(collectText).join(' ');
+  return (node.children ?? []).map(collectText).join(' ');
 }
 
-describe('App (Milestone 1: Hello tvOS)', () => {
+async function render() {
+  let tree: ReactTestRenderer.ReactTestRenderer | undefined;
+  await ReactTestRenderer.act(() => {
+    tree = ReactTestRenderer.create(<App />);
+  });
+  return tree!;
+}
+
+describe('App (Milestone 2: declarative primitives)', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    // Pin "now" so the Countdown output is deterministic across machines.
+    jest.setSystemTime(new Date('2026-05-27T08:00:00Z'));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test('renders without throwing', async () => {
-    let tree: ReactTestRenderer.ReactTestRenderer | undefined;
-    await ReactTestRenderer.act(() => {
-      tree = ReactTestRenderer.create(<App />);
-    });
+    const tree = await render();
     expect(tree).toBeDefined();
   });
 
-  test('shows "Hello from tvOS"', async () => {
-    let tree: ReactTestRenderer.ReactTestRenderer | undefined;
-    await ReactTestRenderer.act(() => {
-      tree = ReactTestRenderer.create(<App />);
-    });
-    const text = collectText(tree!.root);
-    expect(text).toContain('Hello from tvOS');
-  });
+  test('renders the sample layout primitives', async () => {
+    const tree = await render();
+    const text = collectText(tree.root);
 
-  test('shows a Milestone 1 indicator', async () => {
-    let tree: ReactTestRenderer.ReactTestRenderer | undefined;
-    await ReactTestRenderer.act(() => {
-      tree = ReactTestRenderer.create(<App />);
-    });
-    const text = collectText(tree!.root);
-    expect(text).toMatch(/Milestone 1/);
-  });
-
-  test('shows the Platform.OS value', async () => {
-    let tree: ReactTestRenderer.ReactTestRenderer | undefined;
-    await ReactTestRenderer.act(() => {
-      tree = ReactTestRenderer.create(<App />);
-    });
-    const text = collectText(tree!.root);
-    // In Jest under the react-native preset the platform is mocked as 'ios'.
-    // On real tvOS Platform.isTVOS is true; both render the same line.
-    expect(text).toMatch(/Platform\.OS\s*=\s*\w+/);
+    // Card
+    expect(text).toContain('Next Meeting');
+    expect(text).toContain('Standup');
+    // Countdown
+    expect(text).toContain('Starts in');
+    expect(text).toContain('01:00:00');
+    // List
+    expect(text).toContain('9:00 AM - Standup');
+    expect(text).toContain('11:00 AM - Design Review');
+    expect(text).toContain('2:00 PM - 1:1 with Manager');
   });
 });
