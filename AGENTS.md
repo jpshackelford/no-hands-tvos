@@ -250,6 +250,30 @@ The user sees the right-side panel only when explicitly told. Call
 - Using bare `&` instead of subshell-detached `( ... & )` for Metro
 - Asking `gh issue view` without `--json` and getting an ANSI soup back
 
+### Tests & CI
+
+- **Unit tests** live in `app/__tests__/`. Run with `npm test` (Jest + react-test-renderer).
+  - `jest.setup.js` inlines a `react-native-safe-area-context` mock because
+    the package's own jest mock is ESM and the RN preset doesn't transform it.
+- **Lint**: `npm run lint` (`@react-native` ESLint config).
+- **Typecheck**: `npm run typecheck` (`tsc --noEmit`).
+- **End-to-end smoke**: `./scripts/smoke.sh` from repo root. Builds (with
+  codegen-race retry), boots a tvOS sim, installs the app, ensures Metro is
+  running, launches, probes for the `Running "app"` JS log line, and captures
+  a screenshot. Exit codes 0–5 documented in the script header.
+- **CI**: `.github/workflows/ci.yml`. Two jobs:
+  1. `js` on `ubuntu-latest`: lint + typecheck + Jest. Cheap, fast, gates the
+     macOS job.
+  2. `tvos-smoke` on `macos-15`: needs `js`. Installs tvOS sim runtime if
+     missing, creates an Apple TV device if missing, caches Pods and
+     DerivedData, then runs `scripts/smoke.sh --device <picked>`. Uploads the
+     screenshot artifact always; uploads `.build-logs/` on failure.
+- **Why no Vitest**: the RN ecosystem (preset, `@testing-library/react-native`,
+  every native module's jest mock, Detox/Maestro integrations) assumes Jest.
+  Reimplementing the `react-native` Jest preset for Vitest is a 1–2 day
+  project that adds no value for a PoC. Revisit only if/when we have a large
+  body of framework-agnostic logic.
+
 ### Tooling installed during 2026-06-06 setup session
 
 | Tool | Source | Notes |

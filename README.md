@@ -82,3 +82,11 @@ Validate key architectural assumptions before building the full component system
 
 - [voice-relay](https://github.com/jpshackelford/voice-relay) - Main project
 - Design doc: Voice-Relay Kiosk Display Brainstorm (conversation 2fc2a97a)
+
+## License
+
+**This repository is source-visible, not open source.** All rights reserved.
+The code is published here for demonstration and reference only. No license to
+use, copy, modify, or distribute it is granted. See [LICENSE](LICENSE) for the
+full notice and [jpshack@gmail.com](mailto:jpshack@gmail.com) for licensing
+inquiries.
