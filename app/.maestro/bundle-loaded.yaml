@@ -1,0 +1,29 @@
+# Milestone 4 — assert the remotely-loaded bundle actually rendered.
+#
+# This flow proves the M4 hot-load pipeline end-to-end: launch the app
+# (which calls the loader), wait for the bundle's first render, and
+# assert that text emitted by the bundle's `render(state)` is visible
+# on screen. If the bundle eval'd but produced no visible primitives —
+# the silent-blank-screen failure mode the M3 smoke probe was designed
+# to catch — Maestro fails here too.
+#
+# We assert on three independent visible strings to make this robust:
+#   - "Next Meeting" — Card title hardcoded in the bundle's render()
+#   - "Standup"      — Card subtitle, comes from the iCal feed via the
+#                      bundle's setup(); proves the bundle's setup
+#                      actually fetched + parsed iCal, not just rendered
+#                      a constant.
+#   - "Starts in"    — Countdown label, also from the bundle's render().
+appId: org.reactjs.native.example.app
+---
+- launchApp:
+    clearState: false
+# The bundle fetches its source over HTTPS, evaluates it, and the
+# inlined setup() then fetches+parses the iCal feed. On the runner this
+# is typically <1s but cold-network can take longer; wait up to 30s.
+- extendedWaitUntil:
+    visible: 'Next Meeting'
+    timeout: 30000
+- assertVisible: 'Next Meeting'
+- assertVisible: 'Standup'
+- assertVisible: 'Starts in'

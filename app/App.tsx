@@ -1,25 +1,35 @@
 /**
- * no-hands-tvos — Milestone 3
+ * no-hands-tvos — Milestone 4
  *
- * Mounts the Calendar component through ComponentHost: setup() fetches an
- * iCal feed over HTTPS, parses it on Hermes, and feeds the resulting state
- * into the M2 PrimitiveRenderer. ComponentHost logs `M3: calendar setup
- * resolved` once setup() resolves — the smoke test greps for that marker.
+ * Loads a component bundle from a remote URL, evaluates it in the M4
+ * sandbox, and mounts the resulting component through `ComponentHost`.
+ * The end-to-end markers visible to the smoke probe are:
+ *
+ *   1. RN's own `Running "app"` line — JS bundle started executing.
+ *   2. `M4: bundle loaded id=calendar-remote …` — loader resolved.
+ *   3. `M3: calendar-remote setup resolved` — ComponentHost ran setup().
+ *   4. `M3: calendar-remote layout=["card","countdown","list"]` — first
+ *      non-empty render.
+ *
+ * The M3 in-tree Calendar component was removed at M4 merge: the remote
+ * bundle at `CALENDAR_BUNDLE_URL` is canonical and the in-tree copy was
+ * dead code. `calendar-config.ts` survives because we still need
+ * `CALENDAR_ICAL_URL` to pass as config into the loaded bundle.
  */
 
 import { StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { calendarComponent } from './src/components/Calendar';
 import { CALENDAR_ICAL_URL } from './src/components/calendar-config';
-import { ComponentHost } from './src/runtime/ComponentHost';
+import { CALENDAR_BUNDLE_URL } from './src/components/remote-config';
+import { RemoteComponent } from './src/components/RemoteComponent';
 
 function App() {
   return (
     <SafeAreaProvider>
       <View style={styles.container}>
-        <ComponentHost
-          component={calendarComponent}
+        <RemoteComponent
+          bundleUrl={CALENDAR_BUNDLE_URL}
           config={{ icalUrl: CALENDAR_ICAL_URL }}
         />
       </View>

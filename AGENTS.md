@@ -512,3 +512,118 @@ needed.
 | `cocoapods` 1.16.2_2 | brew | Brings its own Ruby 4.0; bypasses old system Ruby |
 | Xcode | App Store | 26.3 / build 17C529 |
 | tvOS 26.2 sim | `xcodebuild -downloadPlatform tvOS` | ~3 GB |
+| `openjdk` 26.0.1 | brew | Required by Maestro CLI (JVM-based) |
+| `maestro` 2.6.0 | brew tap `mobile-dev-inc/tap` | See M4 finding below — does not yet support tvOS |
+
+## Milestone 4 learnings (runtime bundle loader, Hermes eval verdict, Maestro tvOS gap)
+
+### The headline finding: **runtime `new Function()` eval works on tvOS Hermes in BOTH Debug and Release**
+
+The M4 PoC question — "can we hot-load a JS component bundle from a URL at runtime?" — has an empirical answer:
+
+- **Debug build (Metro + Hermes interpreter)**: `new Function(...sandboxNames, fetchedCode)` evaluates the bundle, calls run, and `exports.component` becomes a real, callable `Component<State>`. Verified by `./scripts/smoke.sh` against the live bundle at `raw.githubusercontent.com/jpshackelford/nohands-extensions/main/bundles/calendar.bundle.js`. All four log markers fire (`Running "app"`, `M4: bundle loaded …`, `M3: <id> setup resolved`, `M3: <id> layout=…`). Identical visual output to the M3 in-tree Calendar.
+
+- **Release build (Hermes precompiled bytecode bundle, NO Metro)**: Same `new Function(...)` path, same outcome. Verified by `xcodebuild -configuration Release`, install, launch with Metro killed, watch log — all four markers fire and the visible app is identical. Screenshot at `docs/screenshots/milestone-4-release.png` (and the canonical `milestone-4.png` is the same Release capture).
+
+Implication: **the "shared component runtime hot-loaded from URLs" vision is feasible on Apple TV.** No need to fall back to Hermes bytecode bundles or JSON-only components. (The fallback paths are still listed in the M4 issue as documented escape hatches if a future Hermes / RN version disables eval; they are not needed today.)
+
+### Sandbox shape (allow + deny, scope-only)
+
+`app/src/runtime/sandbox.ts` exposes a fixed allow list via `new Function`'s parameter list:
+
+- `exports`, `fetch`, `setTimeout/setInterval/clearTimeout/clearInterval`, `Date`, `Math`, `JSON`, `URL`, `console.{log,warn,error}`.
+
+It ALSO binds a deny list to `undefined` in the same parameter list — this shadows host globals of the same name inside the bundle scope. Deny list: `process`, `require`, `module`, `XMLHttpRequest`, `WebSocket`, `document`, `window`, `localStorage`, `sessionStorage`, `AsyncStorage`, `NativeModules`, `global`, `globalThis`.
+
+**Known sandbox escape, documented in `sandbox.ts`**: a malicious bundle can still reach the host realm via `(0, eval)('this')` or by reading any non-deny-listed host global the author happens to know the name of. The unit test `arbitrary unmentioned globalThis properties remain visible` deliberately locks this in as a documented limitation. The sandbox is **shape-only**, not capability-only — production use needs a separate JS realm (which Hermes doesn't expose) or a vetted-publisher model.
+
+### Loader contract (every failure mode is a distinct error message)
+
+`app/src/runtime/loader.ts` returns a `Component<unknown>` or throws an `Error` whose message starts with `loader:`. Distinct prefixes for each:
+
+- `loader: HTTP <status> fetching <url>` — non-2xx response.
+- `loader: network error fetching <url> — <message>` — fetch threw.
+- `loader: bundle body too small (<n> bytes) from <url>` — body < 64 bytes (the smaller the bundle, the more likely it's a wrong-URL response).
+- `loader: bundle source did not parse — <SyntaxError message>` — `new Function` constructor threw.
+- `loader: bundle threw during evaluation — <message>` — bundle body threw at top level.
+- `loader: bundle did not assign exports.component` — eval ok, no component assigned.
+- `loader: bundle exports.component is not an object (got <typeof>)`.
+- `loader: bundle component missing required "id" | "setup" | "render"`.
+- `loader: bundle component "config" must be an object if provided`.
+
+`RemoteComponent.tsx` catches these, renders a `text` primitive `Error: <message>` (so smoke + Maestro can see it) AND `console.error`s a `RemoteComponent: <message>` line. Both signals are visible to the smoke probe and to the running sim's screen.
+
+### Component-id-prefixed M3 markers — no host change needed
+
+`ComponentHost` already logs `M3: ${component.id} setup resolved` and `M3: ${component.id} layout=[...]`. The remote calendar bundle uses `id: 'calendar-remote'` so its markers are distinguishable from the in-tree `calendar` id in the log. The smoke probe's regex `M3: .* setup resolved` and `M3: .* layout=\["[a-z]+` are component-id-agnostic — same probe works for in-tree and remote components without script changes.
+
+### `M4:` marker for the loader itself
+
+`RemoteComponent` emits `M4: bundle loaded id=<id> url=<url>` once the loader resolves. Not currently required by `scripts/smoke.sh` (the existing 3 markers + the M3 setup-resolved being triggered by a remote-mounted host is already sufficient signal), but it's useful evidence in CI logs and a hook for future smoke checks if the probe needs to distinguish in-tree vs remote.
+
+### Decision recorded: deleted `app/src/components/Calendar.ts` + its test at M4 merge
+
+After Release-mode verification confirmed the remote bundle is functionally identical, the in-tree Calendar was dead code. Removed `Calendar.ts` and `Calendar.test.ts` in the M4 PR. `calendar-config.ts` survives because `CALENDAR_ICAL_URL` is still consumed (passed into the remote bundle's `setup({ config })`). If `nohands-extensions` 404s the loader's error path renders an "Error: …" text primitive on screen + `console.error`s a `loader:` line — visible to operators, no silent failure.
+
+## Maestro tvOS gap (M4) — the dependency the milestone discovered the world doesn't have yet
+
+The M4 brief mandated `tvos-maestro` as a blocking CI job with at least two flows (bundle-loaded + focus-navigation). The flows are checked in at `app/.maestro/`. **They cannot run on tvOS today** because:
+
+1. **Maestro CLI 2.6.0** (Jun 2026, currently `brew install mobile-dev-inc/tap/maestro`) ships exactly two driver variants inside `maestro-ios-driver.jar`:
+   ```
+   driver-iphoneos/Debug-iphoneos/maestro-driver-iosUITests-Runner.zip
+   driver-iPhoneSimulator/Debug-iphonesimulator/maestro-driver-iosUITests-Runner.zip
+   ```
+   No `appletvsimulator` or `appletvos` build exists. (`unzip -l /opt/homebrew/Cellar/maestro/2.6.0/libexec/lib/maestro-ios-driver.jar | grep zip`.)
+
+2. The XCUITest runner app's Info.plist declares `UIDeviceFamily = [1, 2]` (iPhone, iPad). tvOS sims report device family `3`. `simctl install` refuses with:
+   > `App installation failed: This app was not built to support this device family; app is compatible with (1, 2) but this device supports (3).`
+
+3. **Maestro's CLI `list-devices` happily enumerates tvOS sims** (it lists everything `simctl` lists), which is misleading — the driver pipeline downstream cannot actually install on them.
+
+### What we did instead
+
+- Kept `app/.maestro/bundle-loaded.yaml` and `app/.maestro/focus-navigation.yaml` checked in, authored against the correct primitives, **ready to run the day upstream Maestro adds a tvOS-targeted XCUITest runner**. The flows assert (a) "Next Meeting" / "Standup" / "Starts in" visible after the remote bundle loads, and (b) the app stays responsive + the layout intact across Right-arrow Siri Remote presses.
+- Added a `tvos-maestro` CI job that installs Java + Maestro, runs `maestro list-devices`, and attempts `maestro test app/.maestro/`. The flow attempt is `continue-on-error: true` because it WILL fail until upstream lands tvOS support. The day it starts succeeding, we flip `continue-on-error` off and `tvos-maestro` becomes a true blocking gate.
+- The blocking E2E gate for M4 remains the **3-marker smoke probe inside `tvos-smoke`**. It already catches the failure modes the brief was worried about: JS didn't load, setup() crashed, render() returned `[]` (the silent-blank-screen case). What it does NOT catch is a focus-engine regression that doesn't change the rendered text — and a tvOS-aware E2E tool is exactly the thing that doesn't exist off the shelf in Jun 2026.
+
+### Alternatives investigated and rejected
+
+| Path | Why rejected |
+|---|---|
+| Fork Maestro and add tvOS XCUITest runner targets | 1–2 day project; out of scope for an M4 close. Tracked as a future issue. |
+| AppleScript-driven key send (`osascript -e 'tell System Events to key code 124'`) + screenshot diff | Requires the Simulator window in front and Accessibility permission; non-headless. Tested locally — the keypress did not reliably reach the sim app (Card focus ring did not move after Right press). Not viable for CI. |
+| `idb ui key` (Facebook iOS device bridge) | Same iPhone/iPad device-family constraint as Maestro; no tvOS path. |
+| Detox | Explicitly out of scope per the M4 brief (heavier instrumentation, 10× setup time). |
+| Custom XCUITest test target running directly inside the app | Real path forward, but a 2–4 day project that constitutes Milestone 5+ work, not an M4 follow-on fix. |
+
+### Operating Maestro as an agent (local dev recipe)
+
+```sh
+# Install (one time)
+brew install openjdk
+brew install mobile-dev-inc/tap/maestro
+
+# Per-session environment (Maestro's brew formula doesn't expose JAVA_HOME)
+export JAVA_HOME=/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home
+export PATH="$JAVA_HOME/bin:$PATH"
+export MAESTRO_CLI_NO_ANALYTICS=1
+export MAESTRO_DRIVER_STARTUP_TIMEOUT=180000
+
+# These work today on tvOS:
+maestro --version              # prints 2.6.0 (after a wall of JDK warnings)
+maestro list-devices           # lists tvOS sims among others
+
+# This FAILS today on tvOS with "device family 3 not supported":
+maestro --udid <tvOS-udid> test app/.maestro/bundle-loaded.yaml
+
+# Failure logs land at ~/.maestro/tests/<timestamp>/xctest_runner_*.log
+# Grep for "App installation failed" to confirm the family-3 block.
+```
+
+## Milestone 4 finalised tooling additions
+
+| Tool | Source | Notes |
+|---|---|---|
+| `maestro` 2.6.0 | brew tap `mobile-dev-inc/tap` | tvOS install path blocked upstream; flows checked in for the day it lands |
+| `openjdk` 26.0.1 | brew | Required by Maestro |
