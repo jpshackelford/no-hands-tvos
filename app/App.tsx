@@ -11,10 +11,10 @@
  *   4. `M3: calendar-remote layout=["card","countdown","list"]` — first
  *      non-empty render.
  *
- * The in-tree Calendar component (`./src/components/Calendar.ts`) is
- * kept for now as the M4 PR description's open question: whether to
- * delete it post-merge or retain it as a fallback. Smoke is sufficient
- * to answer that during PR review.
+ * The M3 in-tree Calendar component was removed at M4 merge: the remote
+ * bundle at `CALENDAR_BUNDLE_URL` is canonical and the in-tree copy was
+ * dead code. `calendar-config.ts` survives because we still need
+ * `CALENDAR_ICAL_URL` to pass as config into the loaded bundle.
  */
 
 import { StyleSheet, View } from 'react-native';

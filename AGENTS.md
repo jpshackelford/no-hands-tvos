@@ -561,9 +561,9 @@ It ALSO binds a deny list to `undefined` in the same parameter list — this sha
 
 `RemoteComponent` emits `M4: bundle loaded id=<id> url=<url>` once the loader resolves. Not currently required by `scripts/smoke.sh` (the existing 3 markers + the M3 setup-resolved being triggered by a remote-mounted host is already sufficient signal), but it's useful evidence in CI logs and a hook for future smoke checks if the probe needs to distinguish in-tree vs remote.
 
-### Open question: keep `app/src/components/Calendar.ts` post-M4 or delete?
+### Decision recorded: deleted `app/src/components/Calendar.ts` + its test at M4 merge
 
-The M4 PR description leaves this open for the maintainer. After verification, the in-tree Calendar is functionally redundant with the remote one. Deleting reduces the surface area; keeping leaves a known-good fallback if `nohands-extensions` ever 404s. Decision tracked in PR #9.
+After Release-mode verification confirmed the remote bundle is functionally identical, the in-tree Calendar was dead code. Removed `Calendar.ts` and `Calendar.test.ts` in the M4 PR. `calendar-config.ts` survives because `CALENDAR_ICAL_URL` is still consumed (passed into the remote bundle's `setup({ config })`). If `nohands-extensions` 404s the loader's error path renders an "Error: …" text primitive on screen + `console.error`s a `loader:` line — visible to operators, no silent failure.
 
 ## Maestro tvOS gap (M4) — the dependency the milestone discovered the world doesn't have yet
 
