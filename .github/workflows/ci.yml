@@ -168,7 +168,7 @@ jobs:
   # -------------------------------------------------------------------------
   # Maestro tvOS E2E flows. Milestone 4 hard-required this job; the M4
   # PR (#9) discovered Maestro 2.6.0 does not actually ship a tvOS XCUITest
-  # driver — its iOS driver jar only contains driver-iphoneos and
+  # driver â€” its iOS driver jar only contains driver-iphoneos and
   # driver-iPhoneSimulator variants, so installing the runner on a tvOS
   # sim fails with "device family 3 not supported". The flow YAMLs are
   # checked in ready-to-run, and the job below installs Maestro and
@@ -179,7 +179,7 @@ jobs:
   # job is informational until upstream lands tvOS.
   # -------------------------------------------------------------------------
   tvos-maestro:
-    name: Maestro flows (tvOS — informational, awaiting upstream)
+    name: Maestro flows (tvOS â€” informational, awaiting upstream)
     needs: tvos-smoke
     runs-on: macos-15
     timeout-minutes: 25
@@ -228,18 +228,13 @@ jobs:
           MAESTRO_CLI_NO_ANALYTICS: '1'
           MAESTRO_DRIVER_STARTUP_TIMEOUT: '180000'
         run: |
-          DEVICE_UDID="$(xcrun simctl list devices booted -j \
-            | python3 -c 'import json,sys; d=json.load(sys.stdin); \
-print(next(x["udid"] for v in d["devices"].values() for x in v if x.get("state")=="Booted"))' \
-            2>/dev/null || true)"
-          if [[ -z "$DEVICE_UDID" ]]; then
-            # Pick the first Apple TV device available.
-            DEVICE_UDID="$(xcrun simctl list devices available \
-              | awk '/-- tvOS/{f=1;next} /^--/{f=0} f && /Apple TV/{
-                match($0, /\([0-9A-F-]{36}\)/); if (RSTART) print substr($0, RSTART+1, RLENGTH-2); exit}')"
+          # Find a tvOS sim UDID. Prefer booted; else first available Apple TV.
+          DEVICE_UDID=$(xcrun simctl list devices booted | grep -oE '\(([0-9A-F-]{36})\)' | head -1 | tr -d '()')
+          if [ -z "$DEVICE_UDID" ]; then
+            DEVICE_UDID=$(xcrun simctl list devices available | awk '/-- tvOS/{f=1;next} /^--/{f=0} f && /Apple TV/{print; exit}' | grep -oE '\(([0-9A-F-]{36})\)' | head -1 | tr -d '()')
           fi
           echo "Using device UDID: ${DEVICE_UDID:-<none found>}"
-          if [[ -n "$DEVICE_UDID" ]]; then
+          if [ -n "$DEVICE_UDID" ]; then
             maestro --udid "$DEVICE_UDID" test app/.maestro/ || true
           else
             echo "No tvOS device available; skipping" >&2
