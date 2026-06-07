@@ -427,6 +427,81 @@ needed.
   with up/down navigation between rows. Revisit only if a primitive needs
   to handle hundreds of items.
 
+## Milestone 3 learnings (component runtime, fetch, intervals)
+
+- **Hermes `fetch()` Just Works against `raw.githubusercontent.com`.** No
+  ATS exception needed — `https://raw.githubusercontent.com/...` returns
+  `text/plain; charset=utf-8` and the JS thread parses it without any
+  native config changes. M1's worry about ATS turned out to be a non-event
+  for HTTPS endpoints on `*.githubusercontent.com`. CORS, as expected, is
+  irrelevant on native RN.
+
+- **External fixture lives in a sibling repo, not this one.** The M3
+  Calendar fetches from
+  `https://raw.githubusercontent.com/jpshackelford/nohands-extensions/main/fixtures/sample.ics`.
+  Self-hosting the fixture inside this PoC repo would have created a
+  chicken-and-egg between the PR (where `main` doesn't have the file yet)
+  and CI smoke (which fetches at runtime). Hosting it externally makes
+  PR-phase and post-merge CI fetch behave identically. The sibling repo
+  is `jpshackelford/nohands-extensions`.
+
+- **`raw.githubusercontent.com` caches for 300s (`max-age=300`).** Any
+  fixture edit during dev won't show up in the running sim immediately;
+  expect ~5 minutes (or use a query-string cache buster) before a fresh
+  smoke captures the change. Verified during M3 when the screenshot
+  initially showed stale data after I bumped the DTSTART.
+
+- **Fixture dates must stay in the future.** Calendar's `render()` filters
+  out past events so the next-meeting Card stays accurate. The committed
+  `sample.ics` uses `DTSTART:20300615T...` so the Card has something to
+  point at for years. Tests don't read from the fixture file — they use
+  inline `SAMPLE_ICS` strings + `jest.setSystemTime(...)` for
+  determinism, so the live fixture's dates can drift independently.
+
+- **`ComponentHost` uses `useRef` + `useReducer` force-render, not
+  `useState`.** `ctx.setState` and `ctx.render` can be invoked from
+  inside an interval callback that was registered while `setup()` was
+  still pending. With `useState`, the post-resolve `setState` could race
+  with the interval-driven `setState`. A single `stateRef.current` (read
+  synchronously, mutated in place) plus an explicit `forceRender` makes
+  those orderings deterministic and unblocks the unit tests.
+
+- **Test the post-`await` chain by flushing several microtasks.** When
+  `Calendar`'s refresh interval body chains `fetchAndParse(url).then(...)`,
+  the body returns `undefined` and the test can't `await` it. Two
+  `await Promise.resolve()` rounds aren't always enough — the chain is
+  `fetch → res.text → parseICalSimple (sync) → setState`. The
+  `Calendar.test.ts` refresh test flushes 6 rounds to be robust.
+
+- **`jest.spyOn(console, 'log').mockImplementation(...)`** silences the
+  M3 marker (and warnings) in the test suite so it doesn't pollute Jest
+  output. Don't forget to `mockRestore()` in `afterEach` or the next
+  describe block runs without `console.log` and stops seeing failures.
+
+- **iCal unfolding strips the fold whitespace.** RFC 5545 says a CRLF
+  followed by a single whitespace char marks a continuation; unfolding
+  removes that whitespace. So `"long\r\n word"` parses to `"longword"`,
+  NOT `"long word"`. If you want a literal space, the source must emit
+  two leading spaces (one fold + one content space).
+
+- **Smoke probe pattern keeps evolving.** M1 grepped `Running "app"`.
+  M2 added `M2: PrimitiveRenderer mounted`. M3 added TWO markers and
+  the smoke probe now requires all three:
+    1. `Running "app"` — JS bundle started executing.
+    2. `M3: <id> setup resolved` — `setup()` promise resolved.
+    3. `M3: <id> layout=["..."]` — at least one primitive on screen.
+  The third marker closes a real gap: a unit test pyramid + a
+  setup-resolved marker would still pass if `render(state)` returned
+  `[]` from the host. The host now logs the rendered layout shape on
+  every shape change AFTER state is resolved AND the array is
+  non-empty, and the smoke probe regex `M3: .* layout=\["[a-z]+`
+  rejects an empty array. Stops the silent-blank-screen failure mode
+  reaching CI green.
+
+- **eslint-config doesn't enable `no-console`.** Don't add
+  `// eslint-disable-next-line no-console` comments — they trip the
+  `eslint-comments/no-unused-disable` rule. Just `console.log` directly.
+
 ### Tooling installed during 2026-06-06 setup session
 
 | Tool | Source | Notes |
