@@ -484,11 +484,19 @@ needed.
   NOT `"long word"`. If you want a literal space, the source must emit
   two leading spaces (one fold + one content space).
 
-- **Smoke probe pattern keeps evolving.** M1 grepped `Running "app"`. M2
-  added `M2: PrimitiveRenderer mounted`. M3 replaces the second marker
-  with `M3: <component-id> setup resolved` (regex `M3: .* setup resolved`
-  in `smoke.sh`). The pattern is generic so future milestones can swap
-  components without touching the smoke script.
+- **Smoke probe pattern keeps evolving.** M1 grepped `Running "app"`.
+  M2 added `M2: PrimitiveRenderer mounted`. M3 added TWO markers and
+  the smoke probe now requires all three:
+    1. `Running "app"` — JS bundle started executing.
+    2. `M3: <id> setup resolved` — `setup()` promise resolved.
+    3. `M3: <id> layout=["..."]` — at least one primitive on screen.
+  The third marker closes a real gap: a unit test pyramid + a
+  setup-resolved marker would still pass if `render(state)` returned
+  `[]` from the host. The host now logs the rendered layout shape on
+  every shape change AFTER state is resolved AND the array is
+  non-empty, and the smoke probe regex `M3: .* layout=\["[a-z]+`
+  rejects an empty array. Stops the silent-blank-screen failure mode
+  reaching CI green.
 
 - **eslint-config doesn't enable `no-console`.** Don't add
   `// eslint-disable-next-line no-console` comments — they trip the

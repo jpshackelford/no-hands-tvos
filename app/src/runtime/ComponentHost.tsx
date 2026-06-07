@@ -152,6 +152,24 @@ export function ComponentHost<State>({
     return component.render(stateRef.current);
   })();
 
+  // Log the rendered layout shape once per state-resolved render that
+  // actually changed shape AND has at least one primitive. This catches
+  // "ComponentHost mounted but render() returned []" failures at smoke
+  // time — the marker simply never fires for an empty layout, and the
+  // smoke probe (which requires `M3: <id> layout=["..."]` with at least
+  // one quoted type) exits non-zero instead of silently passing on a
+  // blank-screen render.
+  const layoutShape = primitives.map((p) => p.type).join(',');
+  const lastLayoutShapeRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (stateRef.current == null || errorRef.current) return;
+    if (primitives.length === 0) return;
+    if (lastLayoutShapeRef.current === layoutShape) return;
+    lastLayoutShapeRef.current = layoutShape;
+    const json = `[${primitives.map((p) => `"${p.type}"`).join(',')}]`;
+    console.log(`M3: ${component.id} layout=${json}`);
+  });
+
   const layout: LayoutDefinition = { layout: primitives };
   return <PrimitiveRenderer definition={layout} />;
 }

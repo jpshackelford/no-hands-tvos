@@ -169,17 +169,23 @@ LAUNCH_PID="$(echo "$LAUNCH_OUT" | awk '{print $2}')"
 
 # ---------------------------------------------------------------------------
 log "probe for JS bundle load (timeout ${TIMEOUT_LAUNCH_SECS}s)"
-# We want to catch BOTH "bundle didn't load at all" AND "bundle loaded but
-# nothing rendered" failures. So we require two markers:
-#   1. `Running "app"` — RN's own log line when the bundle starts executing.
-#   2. `M3: <id> setup resolved` — emitted by ComponentHost once the mounted
-#      component's setup() promise has resolved. If JS loads but setup()
-#      crashes / fetch() never completes / parser throws, we still fail with
-#      exit 5 so the "looks blank" failure surfaces.
+# We want to catch THREE failure shapes:
+#   1. `Running "app"` — RN's own log line when the bundle starts
+#      executing. Catches "JS bundle didn't load at all".
+#   2. `M3: <id> setup resolved` — ComponentHost logs this once the
+#      mounted component's setup() promise has resolved. Catches
+#      "JS loaded but setup() crashed / fetch never completed".
+#   3. `M3: <id> layout=["..."]` — ComponentHost logs this on the
+#      first render where state is resolved AND render() returned
+#      at least one primitive. Catches "ComponentHost mounted, setup
+#      resolved, but render() returned []" — the silent-blank-screen
+#      failure mode unit tests don't see because they all use
+#      components that return non-empty layouts.
 PROBE_LOG="$LOG_DIR/smoke-jsprobe-$TS.log"
 DEADLINE=$(( $(date +%s) + TIMEOUT_LAUNCH_SECS ))
 JS_LOADED=0
 SETUP_RESOLVED=0
+LAYOUT_RENDERED=0
 while [[ $(date +%s) -lt $DEADLINE ]]; do
   xcrun simctl spawn booted log show \
       --predicate 'processImagePath CONTAINS "/app.app/"' \
@@ -190,13 +196,17 @@ while [[ $(date +%s) -lt $DEADLINE ]]; do
   if grep -qE 'M3: .* setup resolved' "$PROBE_LOG"; then
     SETUP_RESOLVED=1
   fi
-  if [[ $JS_LOADED -eq 1 && $SETUP_RESOLVED -eq 1 ]]; then
+  # Require layout=["..."] — at least one quoted primitive type entry.
+  if grep -qE 'M3: .* layout=\["[a-z]+' "$PROBE_LOG"; then
+    LAYOUT_RENDERED=1
+  fi
+  if [[ $JS_LOADED -eq 1 && $SETUP_RESOLVED -eq 1 && $LAYOUT_RENDERED -eq 1 ]]; then
     break
   fi
   sleep 2
 done
-if [[ $JS_LOADED -ne 1 || $SETUP_RESOLVED -ne 1 ]]; then
-  echo "smoke: failed within ${TIMEOUT_LAUNCH_SECS}s — JS_LOADED=$JS_LOADED SETUP_RESOLVED=$SETUP_RESOLVED" >&2
+if [[ $JS_LOADED -ne 1 || $SETUP_RESOLVED -ne 1 || $LAYOUT_RENDERED -ne 1 ]]; then
+  echo "smoke: failed within ${TIMEOUT_LAUNCH_SECS}s — JS_LOADED=$JS_LOADED SETUP_RESOLVED=$SETUP_RESOLVED LAYOUT_RENDERED=$LAYOUT_RENDERED" >&2
   echo "--- last 50 lines of simulator log for our app ---" >&2
   tail -50 "$PROBE_LOG" >&2 || true
   echo "--- metro log tail ---" >&2
@@ -205,6 +215,7 @@ if [[ $JS_LOADED -ne 1 || $SETUP_RESOLVED -ne 1 ]]; then
 fi
 echo "JS bundle loaded ✓"
 echo "Component setup resolved ✓"
+echo "Layout rendered with primitives ✓"
 
 # ---------------------------------------------------------------------------
 log "screenshot"

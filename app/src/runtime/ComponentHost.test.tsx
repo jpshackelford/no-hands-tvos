@@ -238,6 +238,85 @@ describe('ComponentHost', () => {
     expect(timeoutFn).not.toHaveBeenCalled();
   });
 
+  test('logs M3 layout shape once setup resolves with non-empty primitives', async () => {
+    await ReactTestRenderer.act(async () => {
+      ReactTestRenderer.create(
+        <ComponentHost component={baseComponent} config={{}} />,
+      );
+      await flushPromises();
+    });
+    expect(logSpy).toHaveBeenCalledWith('M3: demo layout=["text","text"]');
+  });
+
+  test('re-logs M3 layout when setState changes the rendered shape', async () => {
+    let savedCtx: Parameters<Component<DemoState>['setup']>[1] | undefined;
+    // A component whose render shape depends on a state flag, so we can
+    // force a layout change.
+    type S = DemoState & { showSecond: boolean };
+    const variable: Component<S> = {
+      id: 'variable',
+      config: {},
+      async setup(_config, ctx) {
+        savedCtx = ctx as Parameters<Component<DemoState>['setup']>[1];
+        return { greeting: 'hello', tickCount: 0, showSecond: false };
+      },
+      render(s) {
+        const out: ReturnType<Component<S>['render']> = [
+          { type: 'text', text: s.greeting },
+        ];
+        if (s.showSecond) {
+          out.push({ type: 'card', title: 'extra', focusable: false });
+        }
+        return out;
+      },
+    };
+
+    await ReactTestRenderer.act(async () => {
+      ReactTestRenderer.create(
+        <ComponentHost component={variable} config={{}} />,
+      );
+      await flushPromises();
+    });
+    expect(logSpy).toHaveBeenCalledWith('M3: variable layout=["text"]');
+
+    logSpy.mockClear();
+    await ReactTestRenderer.act(async () => {
+      (savedCtx as unknown as { setState: (p: Partial<S>) => void }).setState({
+        showSecond: true,
+      });
+    });
+    expect(logSpy).toHaveBeenCalledWith(
+      'M3: variable layout=["text","card"]',
+    );
+  });
+
+  test('does NOT log M3 layout when render() returns an empty array', async () => {
+    const emptyComponent: Component<{ x: number }> = {
+      id: 'empty',
+      config: {},
+      async setup() {
+        return { x: 0 };
+      },
+      render() {
+        return [];
+      },
+    };
+
+    await ReactTestRenderer.act(async () => {
+      ReactTestRenderer.create(
+        <ComponentHost component={emptyComponent} config={{}} />,
+      );
+      await flushPromises();
+    });
+    // The setup-resolved marker still fires (setup did resolve), but the
+    // layout-shape marker must NOT — smoke would catch the blank-screen
+    // failure mode on exactly this case.
+    expect(logSpy).toHaveBeenCalledWith('M3: empty setup resolved');
+    expect(logSpy).not.toHaveBeenCalledWith(
+      expect.stringMatching(/M3: empty layout=/),
+    );
+  });
+
   test('renders the error message when setup() rejects', async () => {
     const component: Component<DemoState> = {
       ...baseComponent,
